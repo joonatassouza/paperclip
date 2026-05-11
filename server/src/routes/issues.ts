@@ -72,6 +72,7 @@ import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectIssueWorkspaceCommandPaths,
 } from "./workspace-command-authz.js";
+import { isSecretaryAgent } from "../services/agent-permissions.js";
 import { shouldWakeAssigneeOnCheckout } from "./issues-checkout-wakeup.js";
 import {
   isInlineAttachmentContentType,
@@ -2291,6 +2292,10 @@ export function issueRoutes(
   router.post("/companies/:companyId/issues", applyCreateIssueStatusDefault, validate(createIssueSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
+    if (isSecretaryAgent(req.actor.agentRole) && req.body.originKind !== "triage") {
+      res.status(403).json({ error: "Secretary agents may only create triage-scoped issues" });
+      return;
+    }
     assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(req.body));
     if (req.body.assigneeAgentId || req.body.assigneeUserId) {
       await assertCanAssignTasks(req, companyId);
@@ -2531,6 +2536,10 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, existing.companyId);
+    if (isSecretaryAgent(req.actor.agentRole)) {
+      res.status(403).json({ error: "Secretary agents may not mutate issues directly" });
+      return;
+    }
     assertNoAgentHostWorkspaceCommandMutation(req, collectIssueWorkspaceCommandPaths(req.body));
     if (!(await assertAgentIssueMutationAllowed(req, res, existing))) return;
 

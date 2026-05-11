@@ -25,3 +25,8 @@ export function normalizeAgentPermissions(
         : defaults.canCreateAgents,
   };
 }
+
+// Secretary agents may only create triage-scoped issues and may not mutate existing ones.
+export function isSecretaryAgent(agentRole: string | undefined): boolean {
+  return agentRole === "secretary";
+}
