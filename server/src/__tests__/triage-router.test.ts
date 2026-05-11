@@ -80,7 +80,7 @@ describe("triage router", () => {
       expect(result.matchedVenaIds).toEqual(["VENA-99"]);
     });
 
-    it("routes to first agent if no CTO role found", async () => {
+    it("returns null routeToAgentId when no CTO role found — no fallback to preserve audit trail integrity", async () => {
       const { route } = await import("../services/triage/router.js");
       const db = makeDb([{ id: "agent-engineer", role: "engineer" }]);
 
@@ -90,7 +90,8 @@ describe("triage router", () => {
       }, baseConfig);
 
       expect(result.outcome).toBe("vena_id_routed");
-      expect(result.routeToAgentId).toBe("agent-engineer");
+      // Must be null — silently routing to a non-CTO agent corrupts the audit trail
+      expect(result.routeToAgentId).toBeNull();
     });
 
     it("returns null routeToAgentId when roster is empty", async () => {

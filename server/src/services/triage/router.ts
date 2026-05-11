@@ -75,21 +75,14 @@ async function loadAgentRoster(db: Db, companyId: string): Promise<AgentRosterEn
   }));
 }
 
-async function findCtoAgentId(db: Db, companyId: string): Promise<string | null> {
+// Returns the CTO agent id, or null if no agent with role "cto" exists.
+// Never falls back to an arbitrary agent — a missing CTO is an explicit null to preserve audit trail integrity.
+async function findCtoAgentIdByRole(db: Db, companyId: string): Promise<string | null> {
   const rows = await db
-    .select({ id: agents.id })
-    .from(agents)
-    .where(eq(agents.companyId, companyId))
-    .then((all) => all.filter((a) => a.id));
-
-  // Look for CTO role
-  const ctoRows = await db
-    .select({ id: agents.id })
+    .select({ id: agents.id, role: agents.role })
     .from(agents)
     .where(eq(agents.companyId, companyId));
-
-  const cto = ctoRows.find((a) => (a as { id: string }).id);
-  return cto?.id ?? null;
+  return rows.find((r) => r.role === "cto")?.id ?? null;
 }
 
 export async function route(
@@ -174,14 +167,6 @@ export async function route(
     routeToAgentId: null,
     routeToHumanUserId: fallbackHumanId,
   };
-}
-
-async function findCtoAgentIdByRole(db: Db, companyId: string): Promise<string | null> {
-  const rows = await db
-    .select({ id: agents.id, role: agents.role })
-    .from(agents)
-    .where(eq(agents.companyId, companyId));
-  return rows.find((r) => r.role === "cto")?.id ?? rows[0]?.id ?? null;
 }
 
 function getFallbackHumanId(config: TriageConfig, channelKind: string): string | null {

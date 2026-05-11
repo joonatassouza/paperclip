@@ -19,33 +19,34 @@ const MAX_BODY_BYTES = 256 * 1024;
 const MAX_BODY_TEXT_CHARS = 200_000;
 const MAX_ATTACHMENTS = 16;
 
+// § 3.3 — all wire-level fields are snake_case
 const bodyAttachmentSchema = z.object({
   kind: z.string().min(1).max(64),
-  uriOrHash: z.string().min(1).max(2048),
-  sizeBytes: z.number().int().nonnegative().optional(),
+  uri_or_hash: z.string().min(1).max(2048),
+  size_bytes: z.number().int().nonnegative().optional(),
 });
 
 const triageRequestBodySchema = z.object({
   source: z.string().min(1).max(128),
-  externalId: z.string().min(1).max(256),
-  receivedAt: z.string().datetime({ offset: true }),
+  external_id: z.string().min(1).max(256),
+  received_at: z.string().datetime({ offset: true }),
   sender: z.object({
-    externalUserId: z.string().min(1).max(256),
-    displayName: z.string().min(1).max(256),
+    external_user_id: z.string().min(1).max(256),
+    display_name: z.string().min(1).max(256),
     email: z.string().email().optional(),
-    roleHint: z.string().max(128).optional(),
+    role_hint: z.string().max(128).optional(),
   }),
   channel: z.object({
     id: z.string().min(1).max(256),
     name: z.string().min(1).max(256),
     kind: z.string().min(1).max(64),
   }),
-  bodyText: z.string().max(MAX_BODY_TEXT_CHARS),
-  bodyAttachments: z.array(bodyAttachmentSchema).max(MAX_ATTACHMENTS).optional(),
-  threadContext: z
+  body_text: z.string().max(MAX_BODY_TEXT_CHARS),
+  body_attachments: z.array(bodyAttachmentSchema).max(MAX_ATTACHMENTS).optional(),
+  thread_context: z
     .object({
-      threadId: z.string().max(256).optional(),
-      priorMessageExternalIds: z.array(z.string().max(256)).max(64).optional(),
+      thread_id: z.string().max(256).optional(),
+      prior_message_external_ids: z.array(z.string().max(256)).max(64).optional(),
     })
     .optional(),
 });
@@ -99,13 +100,12 @@ export function chatTriageRoutes(db: Db) {
       return;
     }
 
-    // Parse and validate request body
+    // § 3.5 — parse and validate; never leak field-level error detail
     const parseResult = triageRequestBodySchema.safeParse(req.body);
     if (!parseResult.success) {
       res.status(422).json({
         error: "validation_error",
         message: "Request body does not match expected schema",
-        details: parseResult.error.flatten(),
       });
       return;
     }
@@ -133,15 +133,15 @@ export function chatTriageRoutes(db: Db) {
 
     if (idempotencyResult.hit) {
       if (idempotencyResult.samePayload && idempotencyResult.cachedResponseJson) {
-        // Exact replay — return cached response
+        // Exact replay — return cached response with idempotent_replay flag overridden to true
         logger.info({ correlationId }, "triage webhook: idempotency cache hit — replaying");
-        let cached: unknown;
+        let cached: Record<string, unknown>;
         try {
-          cached = JSON.parse(idempotencyResult.cachedResponseJson);
+          cached = JSON.parse(idempotencyResult.cachedResponseJson) as Record<string, unknown>;
         } catch {
           cached = { error: "cached_response_corrupted" };
         }
-        res.status(200).json(cached);
+        res.status(200).json({ ...cached, idempotent_replay: true });
         return;
       }
       // Same key, different payload — conflict
@@ -152,16 +152,30 @@ export function chatTriageRoutes(db: Db) {
       return;
     }
 
-    // Route the message
+    // Map snake_case wire body to internal camelCase TriageRequest
     const triageRequest = {
       source: body.source,
-      externalId: body.externalId,
-      receivedAt: body.receivedAt,
-      sender: body.sender,
+      externalId: body.external_id,
+      receivedAt: body.received_at,
+      sender: {
+        externalUserId: body.sender.external_user_id,
+        displayName: body.sender.display_name,
+        email: body.sender.email,
+        roleHint: body.sender.role_hint,
+      },
       channel: body.channel,
-      bodyText: body.bodyText,
-      bodyAttachments: body.bodyAttachments,
-      threadContext: body.threadContext,
+      bodyText: body.body_text,
+      bodyAttachments: body.body_attachments?.map((a) => ({
+        kind: a.kind,
+        uriOrHash: a.uri_or_hash,
+        sizeBytes: a.size_bytes,
+      })),
+      threadContext: body.thread_context
+        ? {
+            threadId: body.thread_context.thread_id,
+            priorMessageExternalIds: body.thread_context.prior_message_external_ids,
+          }
+        : undefined,
     };
 
     const routingResult = await route(db, config.companyId, triageRequest, config);
@@ -182,8 +196,8 @@ export function chatTriageRoutes(db: Db) {
       const cardResult = await createOrUpdateTriageCard(db, {
         companyId: config.companyId,
         correlationId,
-        bodyText: body.bodyText,
-        senderDisplayName: body.sender.displayName,
+        bodyText: body.body_text,
+        senderDisplayName: body.sender.display_name,
         channelId: body.channel.id,
         channelKind: body.channel.kind,
         source: body.source,
@@ -193,18 +207,17 @@ export function chatTriageRoutes(db: Db) {
         venaIdsMatched: routingResult.matchedVenaIds,
         secretaryAgentId: config.secretaryAgentId ?? null,
         boardProjectId: config.triageBoardProjectId ?? null,
-        existingThreadId: body.threadContext?.threadId ?? null,
+        existingThreadId: body.thread_context?.thread_id ?? null,
       });
       triageIssueId = cardResult.issueId;
     } catch (err) {
       logger.error({ err, correlationId }, "triage webhook: failed to create triage card — continuing");
     }
 
-    // Fire ambiguity fanout if routed to human
+    // § 6 identity erasure — fanout carries no PII; channelKind is structural metadata only
     if (routingResult.outcome === "routed_to_human") {
       void sendAmbiguityFanout(
         correlationId,
-        body.sender.displayName,
         body.channel.kind,
         routingResult.reason,
         config.googleChatWebhookSecretary,
@@ -212,19 +225,19 @@ export function chatTriageRoutes(db: Db) {
     }
 
     // Persist audit row
-    const senderHash = hashSender(body.sender.externalUserId);
+    const senderHash = hashSender(body.sender.external_user_id);
     try {
       await writeTriageEvent(db, {
         correlationId,
         idempotencyKeyHash,
         payloadHash,
         tokenId,
-        receivedAt: new Date(body.receivedAt),
+        receivedAt: new Date(body.received_at),
         source: body.source,
         channelId: body.channel.id,
         channelKind: body.channel.kind,
         senderExternalUserIdHash: senderHash,
-        bodyLength: body.bodyText.length,
+        bodyLength: body.body_text.length,
         venaIdsMatched: routingResult.matchedVenaIds,
         classificationOutcome: routingResult.outcome,
         confidence: routingResult.confidence !== null ? String(routingResult.confidence) : null,
@@ -237,16 +250,22 @@ export function chatTriageRoutes(db: Db) {
       logger.error({ err, correlationId }, "triage webhook: failed to write triage event — continuing");
     }
 
+    // § 3.4 — nested classification / route_to shape, all snake_case
     const responseBody = {
-      correlationId,
-      outcome: routingResult.outcome,
-      routeToKind: routingResult.routeToKind,
-      routeToAgentId: routingResult.routeToAgentId,
-      routeToHumanUserId: routingResult.routeToHumanUserId,
-      confidence: routingResult.confidence,
-      matchedVenaIds: routingResult.matchedVenaIds,
-      triageIssueId,
-      reason: routingResult.reason,
+      correlation_id: correlationId,
+      triage_event_id: triageIssueId,
+      idempotent_replay: false,
+      classification: {
+        outcome: routingResult.outcome,
+        confidence: routingResult.confidence,
+        matched_vena_ids: routingResult.matchedVenaIds,
+        reason: routingResult.reason,
+      },
+      route_to: {
+        kind: routingResult.routeToKind,
+        agent_id: routingResult.routeToAgentId,
+        human_user_id: routingResult.routeToHumanUserId,
+      },
     };
 
     // Cache the response for idempotency replay
