@@ -9,6 +9,7 @@ declare global {
         userName?: string | null;
         userEmail?: string | null;
         agentId?: string;
+        agentRole?: string;
         companyId?: string;
         companyIds?: string[];
         memberships?: Array<{
