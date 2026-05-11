@@ -4116,6 +4116,10 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    if (isSecretaryAgent(req.actor.agentRole)) {
+      res.status(403).json({ error: "Secretary agents may not post comments on issues directly" });
+      return;
+    }
     if (!(await assertAgentIssueMutationAllowed(req, res, issue))) return;
     if (!assertStructuredCommentFieldsAllowed(req, res, {
       presentation: req.body.presentation,

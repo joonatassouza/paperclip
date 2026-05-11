@@ -126,7 +126,6 @@ function buildMentionBody(opts: {
 
 export async function sendAmbiguityFanout(
   correlationId: string,
-  senderDisplayName: string,
   channelKind: string,
   rationale: string | null,
   webhookUrl: string | undefined,
@@ -136,10 +135,11 @@ export async function sendAmbiguityFanout(
     return;
   }
 
+  // § 26 identity erasure — no sender name in GC fanout; channelKind is structural metadata only
   const msg = [
     `*Triage ambiguity — action required*`,
     ``,
-    `- *What:* Inbound message from ${senderDisplayName} via ${channelKind} could not be confidently routed`,
+    `- *What:* Inbound ${channelKind} message could not be confidently routed`,
     `- *Why:* ${rationale ?? "Classifier confidence below threshold or unknown target"}`,
     `- *Who unblocks:* Designated human reviewer — please check Board Triage for correlation ID ${correlationId}`,
     `- *Cross-channel:* Correlation ID ${correlationId} in triage_events`,

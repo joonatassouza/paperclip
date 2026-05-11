@@ -77,13 +77,14 @@ function defaultRoutingResult() {
   };
 }
 
+// § 3.3 — wire body uses snake_case
 const validBody = {
   source: "google-chat",
-  externalId: "ext-001",
-  receivedAt: new Date().toISOString(),
-  sender: { externalUserId: "u-abc", displayName: "Test Sender" },
+  external_id: "ext-001",
+  received_at: new Date().toISOString(),
+  sender: { external_user_id: "u-abc", display_name: "Test Sender" },
   channel: { id: "space-1", name: "Team Space", kind: "google_chat" },
-  bodyText: "Please help me debug this issue",
+  body_text: "Please help me debug this issue",
 };
 
 async function createTestApp() {
@@ -112,7 +113,7 @@ describe("POST /api/webhooks/chat-triage", () => {
   });
 
   describe("happy path", () => {
-    it("returns 200 with routing result for a valid request", async () => {
+    it("returns 200 with nested routing result for a valid request", async () => {
       const app = await createTestApp();
       const res = await request(app)
         .post("/api/webhooks/chat-triage")
@@ -122,10 +123,12 @@ describe("POST /api/webhooks/chat-triage", () => {
         .send(validBody);
 
       expect(res.status).toBe(200);
-      expect(res.body.outcome).toBe("routed_to_agent");
-      expect(res.body.correlationId).toBeTruthy();
-      expect(res.body.routeToAgentId).toBe("agent-engineer");
-      expect(res.body.triageIssueId).toBe("issue-triage-1");
+      // § 3.4 — nested response shape
+      expect(res.body.classification.outcome).toBe("routed_to_agent");
+      expect(res.body.correlation_id).toBeTruthy();
+      expect(res.body.route_to.agent_id).toBe("agent-engineer");
+      expect(res.body.triage_event_id).toBe("issue-triage-1");
+      expect(res.body.idempotent_replay).toBe(false);
       expect(mockWriteTriageEvent).toHaveBeenCalledOnce();
       expect(mockUpdateTriageEventCachedResponse).toHaveBeenCalledOnce();
     });
@@ -141,7 +144,7 @@ describe("POST /api/webhooks/chat-triage", () => {
         .send(validBody);
 
       expect(res.status).toBe(200);
-      expect(res.body.correlationId).toBe("my-corr-id-123");
+      expect(res.body.correlation_id).toBe("my-corr-id-123");
     });
 
     it("fires ambiguity fanout when outcome is routed_to_human", async () => {
@@ -164,7 +167,7 @@ describe("POST /api/webhooks/chat-triage", () => {
         .send(validBody);
 
       expect(res.status).toBe(200);
-      expect(res.body.outcome).toBe("routed_to_human");
+      expect(res.body.classification.outcome).toBe("routed_to_human");
       // fanout is fire-and-forget; just ensure it was called
       await vi.waitFor(() => expect(mockSendAmbiguityFanout).toHaveBeenCalledOnce());
     });
@@ -181,7 +184,7 @@ describe("POST /api/webhooks/chat-triage", () => {
         .send(validBody);
 
       expect(res.status).toBe(200);
-      expect(res.body.triageIssueId).toBeNull();
+      expect(res.body.triage_event_id).toBeNull();
     });
   });
 
@@ -233,7 +236,7 @@ describe("POST /api/webhooks/chat-triage", () => {
       expect(res.body.error).toBe("missing_idempotency_key");
     });
 
-    it("returns 422 for missing required fields in body", async () => {
+    it("returns 422 for missing required fields — no field-level detail leaked", async () => {
       const app = await createTestApp();
       const res = await request(app)
         .post("/api/webhooks/chat-triage")
@@ -244,24 +247,51 @@ describe("POST /api/webhooks/chat-triage", () => {
 
       expect(res.status).toBe(422);
       expect(res.body.error).toBe("validation_error");
+      // § 3.5 — no field-level detail in 422 body
+      expect(res.body.details).toBeUndefined();
     });
 
-    it("returns 422 for bodyText that exceeds 200k chars", async () => {
+    it("returns 422 for body_text that exceeds 200k chars", async () => {
       const app = await createTestApp();
       const res = await request(app)
         .post("/api/webhooks/chat-triage")
         .set("Authorization", `Bearer ${TEST_TOKEN}`)
         .set("Content-Type", "application/json")
         .set("Idempotency-Key", "idem-009")
-        .send({ ...validBody, bodyText: "x".repeat(200_001) });
+        .send({ ...validBody, body_text: "x".repeat(200_001) });
+
+      expect(res.status).toBe(422);
+    });
+
+    it("rejects camelCase fields — wire contract is snake_case", async () => {
+      const app = await createTestApp();
+      const res = await request(app)
+        .post("/api/webhooks/chat-triage")
+        .set("Authorization", `Bearer ${TEST_TOKEN}`)
+        .set("Content-Type", "application/json")
+        .set("Idempotency-Key", "idem-sc")
+        .send({
+          source: "google-chat",
+          externalId: "ext-001",
+          receivedAt: new Date().toISOString(),
+          sender: { externalUserId: "u-abc", displayName: "Test Sender" },
+          channel: { id: "space-1", name: "Team Space", kind: "google_chat" },
+          bodyText: "Hello",
+        });
 
       expect(res.status).toBe(422);
     });
   });
 
   describe("idempotency", () => {
-    it("returns cached response on exact replay", async () => {
-      const cachedResponse = { correlationId: "cached-corr", outcome: "routed_to_agent" };
+    it("returns cached response with idempotent_replay:true on exact replay", async () => {
+      const cachedResponse = {
+        correlation_id: "cached-corr",
+        triage_event_id: "issue-cached",
+        idempotent_replay: false,
+        classification: { outcome: "routed_to_agent", confidence: 0.9, matched_vena_ids: null, reason: "ok" },
+        route_to: { kind: "agent", agent_id: "agent-1", human_user_id: null },
+      };
       mockCheckIdempotency.mockResolvedValue({
         hit: true,
         samePayload: true,
@@ -277,7 +307,8 @@ describe("POST /api/webhooks/chat-triage", () => {
         .send(validBody);
 
       expect(res.status).toBe(200);
-      expect(res.body.correlationId).toBe("cached-corr");
+      expect(res.body.correlation_id).toBe("cached-corr");
+      expect(res.body.idempotent_replay).toBe(true);
       expect(mockRoute).not.toHaveBeenCalled();
     });
 
