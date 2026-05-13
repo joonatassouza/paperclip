@@ -22,7 +22,7 @@ import {
 } from "@paperclipai/adapter-utils/execution-target";
 import { DEFAULT_GEMINI_LOCAL_MODEL, SANDBOX_INSTALL_COMMAND } from "../index.js";
 import { detectGeminiAuthRequired, detectGeminiQuotaExhausted, parseGeminiJsonl } from "./parse.js";
-import { firstNonEmptyLine } from "./utils.js";
+import { firstNonEmptyLine, filterConflictingExtraArgs } from "./utils.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -171,11 +171,12 @@ export async function testEnvironment(
       const approvalMode = asString(config.approvalMode, asBoolean(config.yolo, false) ? "yolo" : "default");
       const sandbox = asBoolean(config.sandbox, false);
       const helloProbeTimeoutSec = Math.max(1, asNumber(config.helloProbeTimeoutSec, 60));
-      const extraArgs = (() => {
+      const rawExtraArgs = (() => {
         const fromExtraArgs = asStringArray(config.extraArgs);
         if (fromExtraArgs.length > 0) return fromExtraArgs;
         return asStringArray(config.args);
       })();
+      const { filtered: extraArgs } = filterConflictingExtraArgs(rawExtraArgs);
 
       const args = ["--output-format", "stream-json", "--prompt", "Respond with hello."];
       if (model && model !== DEFAULT_GEMINI_LOCAL_MODEL) args.push("--model", model);

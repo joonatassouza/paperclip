@@ -49,7 +49,7 @@ Core fields:
 - model (string, optional): Gemini model id. Defaults to auto.
 - sandbox (boolean, optional): run in sandbox mode (default: false, passes --sandbox=none)
 - command (string, optional): defaults to "gemini"
-- extraArgs (string[], optional): additional CLI args
+- extraArgs (string[], optional): additional CLI args. Note: --yolo, -y, and --approval-mode are managed by the adapter and will be silently dropped from extraArgs.
 - env (object, optional): KEY=VALUE environment variables
 
 Operational fields:

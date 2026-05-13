@@ -336,6 +336,49 @@ describe("gemini execute", () => {
     }
   });
 
+  it("filters --yolo from extraArgs but preserves non-conflicting args", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-gemini-extraargs-filter-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "gemini");
+    const capturePath = path.join(root, "capture.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await writeFakeGeminiCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      await execute({
+        runId: "run-extraargs-filter",
+        agent: { id: "a1", companyId: "c1", name: "G", adapterType: "gemini_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          extraArgs: ["--yolo", "--policy", "foo"],
+          env: { PAPERCLIP_TEST_CAPTURE_PATH: capturePath },
+        },
+        context: {},
+        authToken: "t",
+        onLog: async () => {},
+      });
+
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
+      expect(capture.argv).not.toContain("--yolo");
+      expect(capture.argv).toContain("--policy");
+      expect(capture.argv).toContain("foo");
+      expect(capture.argv).toContain("--approval-mode");
+      expect(capture.argv).toContain("yolo");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses a compact wake delta instead of the full heartbeat prompt when resuming a session", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-gemini-resume-wake-"));
     const workspace = path.join(root, "workspace");
