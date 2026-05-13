@@ -55,7 +55,7 @@ import {
   isGeminiUnknownSessionError,
   parseGeminiJsonl,
 } from "./parse.js";
-import { firstNonEmptyLine } from "./utils.js";
+import { firstNonEmptyLine, filterConflictingExtraArgs } from "./utils.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -306,11 +306,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     resolvedCommand,
   });
 
-  const extraArgs = (() => {
+  const rawExtraArgs = (() => {
     const fromExtraArgs = asStringArray(config.extraArgs);
     if (fromExtraArgs.length > 0) return fromExtraArgs;
     return asStringArray(config.args);
   })();
+  const { filtered: extraArgs, dropped: droppedExtraArgs } = filterConflictingExtraArgs(rawExtraArgs);
+  for (const token of droppedExtraArgs) {
+    await onLog("stdout", `[paperclip] gemini_local: dropped ${token} from extraArgs because the adapter manages --approval-mode.\n`);
+  }
   let restoreRemoteWorkspace: (() => Promise<void>) | null = null;
   let remoteSkillsDir: string | null = null;
   let localSkillsDir: string | null = null;

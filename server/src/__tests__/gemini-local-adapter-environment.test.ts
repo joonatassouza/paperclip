@@ -104,6 +104,40 @@ describe("gemini_local environment diagnostics", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
+  it("filters --yolo from extraArgs but preserves non-conflicting args in the hello probe", async () => {
+    const root = path.join(
+      os.tmpdir(),
+      `paperclip-gemini-local-extraargs-filter-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const binDir = path.join(root, "bin");
+    const cwd = path.join(root, "workspace");
+    const argsCapturePath = path.join(root, "args.json");
+    await fs.mkdir(binDir, { recursive: true });
+    await writeFakeGeminiCommand(binDir, argsCapturePath);
+
+    const result = await testEnvironment({
+      companyId: "company-1",
+      adapterType: "gemini_local",
+      config: {
+        command: "gemini",
+        cwd,
+        extraArgs: ["--yolo", "--include-directories", "/workspace"],
+        env: {
+          GEMINI_API_KEY: "test-key",
+          PAPERCLIP_TEST_ARGS_PATH: argsCapturePath,
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+      },
+    });
+
+    expect(result.status).not.toBe("fail");
+    const args = JSON.parse(await fs.readFile(argsCapturePath, "utf8")) as string[];
+    expect(args).not.toContain("--yolo");
+    expect(args).toContain("--include-directories");
+    expect(args).toContain("/workspace");
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
   it("classifies quota exhaustion as a quota warning instead of a generic failure", async () => {
     const root = path.join(
       os.tmpdir(),
